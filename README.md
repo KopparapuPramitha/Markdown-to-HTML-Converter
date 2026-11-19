@@ -131,6 +131,13 @@ footnotes, or task-list checkboxes.
 - [ ] Task list checkboxes (`- [ ]` / `- [x]`)
 - [ ] Syntax highlighting via Pygments (optional dependency)
 - [ ] Batch-convert a whole directory of `.md` files
+## Planned Development Roadmap
+
+- [ ] **GitHub Flavored Markdown (GFM) Tables:** Parse pipe-delimited tables (`| col |`) with alignment support.
+- [ ] **Task Lists & Strikethrough:** Support `- [x]` checkboxes and `~~strikethrough~~` inline formatting.
+- [ ] **Batch Directory Conversion:** Add `--recursive` CLI flag to convert entire documentation folders while preserving directory structure.
+- [ ] **Live-Reload Preview Server:** Built-in local HTTP server (`--serve`) with auto-refresh on `.md` file save.
+- [ ] **Custom Theme Templates:** Allow external CSS stylesheets (`--css theme.css`) and HTML template injection.
 
 ## Contributing
 

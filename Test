@@ -1,0 +1,57 @@
+from converter import markdown_to_html, wrap_html_document
+from md2html import main
+
+
+def test_headers_h1_to_h6():
+    md = "# H1\n## H2\n### H3\n#### H4\n##### H5\n###### H6"
+    out = markdown_to_html(md)
+    assert "<h1>H1</h1>" in out
+    assert "<h6>H6</h6>" in out
+
+
+def test_inline_code_protects_markdown_syntax():
+    md = "Use `**not bold**` and `*not italic*` in code."
+    out = markdown_to_html(md)
+    assert "<code>**not bold**</code>" in out
+    assert "<code>*not italic*</code>" in out
+    assert "<strong>" not in out
+
+
+def test_links_and_images_attribute_escaping():
+    md = '[Example](https://example.com?a=1&b=2 "My Title") and ![Alt "1"](https://example.com/a.png)'
+    out = markdown_to_html(md)
+    assert '<a href="[https://example.com?a=1&b=2](https://example.com?a=1&b=2)" title="My Title">Example</a>' in out
+    assert '<img src="[https://example.com/a.png](https://example.com/a.png)" alt="Alt "1"">' in out
+
+
+def test_nested_lists_and_horizontal_rule():
+    md = "- Parent\n  - Child 1\n  - Child 2\n- Back to root\n\n---\n\n1. First\n2. Second"
+    out = markdown_to_html(md)
+    assert out.count("<ul>") == 2
+    assert out.count("</ul>") == 2
+    assert "<hr>" in out
+    assert "<ol>\n<li>First</li>\n<li>Second</li>\n</ol>" in out
+
+
+def test_fenced_code_block_escapes_html_and_lang():
+    md = '```python"\nprint("<hello>")\n```'
+    out = markdown_to_html(md)
+    assert '<pre><code class="language-python"">print("<hello>")</code></pre>' in out
+
+
+def test_blockquote_and_paragraphs():
+    md = "Line one\nline two\n\n> Quoted line"
+    out = markdown_to_html(md)
+    assert "<p>Line one line two</p>" in out
+    assert "<blockquote><p>Quoted line</p></blockquote>" in out
+
+
+def test_cli_file_conversion(tmp_path):
+    src = tmp_path / "sample.md"
+    dst = tmp_path / "sample.html"
+    src.write_text("# Hello\n\nWorld", encoding="utf-8")
+    exit_code = main([str(src), "-o", str(dst), "--standalone", "--title", "Sample"])
+    assert exit_code == 0
+    html_out = dst.read_text(encoding="utf-8")
+    assert "<title>Sample</title>" in html_out
+    assert "<h1>Hello</h1>" in html_out

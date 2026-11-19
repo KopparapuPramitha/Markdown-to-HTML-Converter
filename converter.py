@@ -6,8 +6,8 @@ Supports:
 - Headers (# through ######)
 - Bold (**text** or __text__) and italic (*text* or _text_)
 - Inline code (`code`) and fenced code blocks (```lang ... ```)
-- Links [text](url) and images ![alt](url)
-- Unordered lists (-, *, +) and ordered lists (1. 2. ...)
+- Links [text](url) and images ![alt](url) with safe attribute escaping
+- Unordered lists (-, *, +) and ordered lists (1. 2. ...) including nested lists
 - Blockquotes (> text)
 - Horizontal rules (---, ***, ___)
 - Paragraphs (blank-line separated)
@@ -18,14 +18,14 @@ syntax — not a full CommonMark implementation.
 
 import html
 import re
-from typing import List
+from typing import List, Optional, Tuple
 
 HEADER_RE = re.compile(r"^(#{1,6})\s+(.*)$")
 HR_RE = re.compile(r"^\s*([-*_])(\s*\1){2,}\s*$")
 UL_RE = re.compile(r"^(\s*)[-*+]\s+(.*)$")
 OL_RE = re.compile(r"^(\s*)\d+\.\s+(.*)$")
 BLOCKQUOTE_RE = re.compile(r"^>\s?(.*)$")
-FENCE_RE = re.compile(r"^```(\w*)\s*$")
+FENCE_RE = re.compile(r"^```([^\s`]*)\s*$")
 
 INLINE_CODE_RE = re.compile(r"`([^`]+)`")
 BOLD_RE = re.compile(r"(\*\*|__)(.+?)\1")
@@ -38,10 +38,13 @@ def _escape(text: str) -> str:
     return html.escape(text, quote=False)
 
 
+def _escape_attr(text: str) -> str:
+    return html.escape(text, quote=True)
+
+
 def _inline(text: str) -> str:
     """Apply inline-level transformations: code, images, links, bold, italic."""
-    # Protect inline code first so its contents aren't touched by other rules
-    placeholders = []
+    placeholders: List[str] = []
 
     def stash_code(match: "re.Match") -> str:
         placeholders.append(_escape(match.group(1)))
@@ -50,22 +53,31 @@ def _inline(text: str) -> str:
     text = INLINE_CODE_RE.sub(stash_code, text)
     text = _escape(text)
 
-    text = IMAGE_RE.sub(
-        lambda m: f'<img src="{m.group(2)}" alt="{m.group(1)}"'
-        + (f' title="{m.group(3)}"' if m.group(3) else "")
-        + ">",
-        text,
-    )
-    text = LINK_RE.sub(
-        lambda m: f'<a href="{m.group(2)}"'
-        + (f' title="{m.group(3)}"' if m.group(3) else "")
-        + f">{m.group(1)}</a>",
-        text,
-    )
+    def render_image(m: "re.Match") -> str:
+        alt = _escape_attr(html.unescape(m.group(1)))
+        src = _escape_attr(html.unescape(m.group(2)))
+        title = (
+            f' title="{_escape_attr(html.unescape(m.group(3)))}"'
+            if m.group(3)
+            else ""
+        )
+        return f'<img src="{src}" alt="{alt}"{title}>'
+
+    def render_link(m: "re.Match") -> str:
+        label = m.group(1)
+        href = _escape_attr(html.unescape(m.group(2)))
+        title = (
+            f' title="{_escape_attr(html.unescape(m.group(3)))}"'
+            if m.group(3)
+            else ""
+        )
+        return f'<a href="{href}"{title}>{label}</a>'
+
+    text = IMAGE_RE.sub(render_image, text)
+    text = LINK_RE.sub(render_link, text)
     text = BOLD_RE.sub(r"<strong>\2</strong>", text)
     text = ITALIC_RE.sub(r"<em>\2</em>", text)
 
-    # Restore protected inline code
     def restore_code(match: "re.Match") -> str:
         idx = int(match.group(1))
         return f"<code>{placeholders[idx]}</code>"
@@ -81,17 +93,37 @@ def markdown_to_html(markdown_text: str) -> str:
 
     i = 0
     paragraph_buffer: List[str] = []
-    list_stack: List[str] = []  # tracks open <ul>/<ol> tags
+    # Tracks active list levels as (tag, indent_width)
+    list_stack: List[Tuple[str, int]] = []
 
-    def flush_paragraph():
+    def flush_paragraph() -> None:
         if paragraph_buffer:
             joined = " ".join(paragraph_buffer)
             html_lines.append(f"<p>{_inline(joined)}</p>")
             paragraph_buffer.clear()
 
-    def close_lists():
-        while list_stack:
-            html_lines.append(f"</{list_stack.pop()}>")
+    def close_lists(target_indent: int = -1) -> None:
+        while list_stack and list_stack[-1][1] > target_indent:
+            tag, _ = list_stack.pop()
+            html_lines.append(f"</{tag}>")
+
+    def handle_list_item(tag: str, indent_str: str, content: str) -> None:
+        indent = len(indent_str.replace("\t", "    "))
+        if not list_stack:
+            html_lines.append(f"<{tag}>")
+            list_stack.append((tag, indent))
+        elif indent > list_stack[-1][1]:
+            html_lines.append(f"<{tag}>")
+            list_stack.append((tag, indent))
+        else:
+            close_lists(indent)
+            if not list_stack or list_stack[-1][0] != tag:
+                if list_stack and list_stack[-1][1] == indent:
+                    old_tag, _ = list_stack.pop()
+                    html_lines.append(f"</{old_tag}>")
+                html_lines.append(f"<{tag}>")
+                list_stack.append((tag, indent))
+        html_lines.append(f"<li>{_inline(content)}</li>")
 
     while i < len(lines):
         line = lines[i]
@@ -108,9 +140,9 @@ def markdown_to_html(markdown_text: str) -> str:
                 code_lines.append(lines[i])
                 i += 1
             code_html = _escape("\n".join(code_lines))
-            lang_attr = f' class="language-{lang}"' if lang else ""
+            lang_attr = f' class="language-{_escape_attr(lang)}"' if lang else ""
             html_lines.append(f"<pre><code{lang_attr}>{code_html}</code></pre>")
-            i += 1  # skip closing fence
+            i += 1
             continue
 
         # Blank line -> paragraph/list break
@@ -157,11 +189,7 @@ def markdown_to_html(markdown_text: str) -> str:
         ul_match = UL_RE.match(line)
         if ul_match:
             flush_paragraph()
-            if not list_stack or list_stack[-1] != "ul":
-                close_lists()
-                html_lines.append("<ul>")
-                list_stack.append("ul")
-            html_lines.append(f"<li>{_inline(ul_match.group(2))}</li>")
+            handle_list_item("ul", ul_match.group(1), ul_match.group(2))
             i += 1
             continue
 
@@ -169,11 +197,7 @@ def markdown_to_html(markdown_text: str) -> str:
         ol_match = OL_RE.match(line)
         if ol_match:
             flush_paragraph()
-            if not list_stack or list_stack[-1] != "ol":
-                close_lists()
-                html_lines.append("<ol>")
-                list_stack.append("ol")
-            html_lines.append(f"<li>{_inline(ol_match.group(2))}</li>")
+            handle_list_item("ol", ol_match.group(1), ol_match.group(2))
             i += 1
             continue
 
@@ -188,7 +212,9 @@ def markdown_to_html(markdown_text: str) -> str:
     return "\n".join(html_lines)
 
 
-def wrap_html_document(body: str, title: str = "Document", css: str = None) -> str:
+def wrap_html_document(
+    body: str, title: str = "Document", css: Optional[str] = None
+) -> str:
     """Wrap an HTML fragment in a full standalone HTML document."""
     style_tag = f"<style>\n{css}\n</style>" if css else ""
     return f"""<!DOCTYPE html>
